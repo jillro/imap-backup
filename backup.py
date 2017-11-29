@@ -2,6 +2,7 @@
 import argparse
 import os
 import getpass
+from datetime import datetime
 from imaplib import IMAP4
 import tarfile
 import re
@@ -19,7 +20,7 @@ hostname = input('Hostname: ')
 user = input('Login: ')
 password = getpass.getpass()
 os.makedirs(os.path.join('output', hostname), exist_ok=True)
-output = zipfile.ZipFile(os.path.join('output', hostname, user + '.zip'), mode='w')
+output = zipfile.ZipFile(os.path.join('output', hostname, user + datetime.now().strftime("%Y%m%d-%H%M%S") + '.zip'), mode='w')
 
 
 def parse_list_response(line):
@@ -36,7 +37,10 @@ def parse_fetch_response(box, messages):
         parser.feed(messages[j + 1][1])
         email = parser.close()
         subject = email.get('Subject', '')
-        date = email.get('date').datetime
+        try:
+            date = email.get('date').datetime
+        except AttributeError:
+            continue
         year = date.strftime('%Y')
         month = date.strftime('%m')
         day = date.strftime('%d')
