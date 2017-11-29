@@ -2,16 +2,17 @@
 import argparse
 import os
 import getpass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from imaplib import IMAP4
-import tarfile
 import re
-import time
 import zipfile
 from email import parser as emailParser, policy as emailPolicy
 from slugify import slugify
 
 parser = argparse.ArgumentParser(description='Backup an IMAP account.')
+parser.add_argument('--younger', '--skip-older', type=int, metavar='DAYS', help='Skip messages older than N days.')
+parser.add_argument('--older', '--skip-younger', type=int, metavar='DAYS', help='Skip messages younger than N days.')
+args = parser.parse_args()
 
 regex = r'\((?P<flags>.*?)\) "(?P<delimiter>.*)" (?P<name>.*)'
 list_response_pattern = re.compile(regex)
@@ -39,6 +40,11 @@ def parse_fetch_response(box, messages):
         subject = email.get('Subject', '')
         try:
             date = email.get('date').datetime
+            age_in_days = datetime.now(timezone.utc) - date
+            if args.younger and age_in_days > timedelta(days=args.younger):
+                continue
+            if args.older and age_in_days < timedelta(days=args.older):
+                continue
         except AttributeError:
             continue
         year = date.strftime('%Y')
