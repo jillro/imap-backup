@@ -12,6 +12,7 @@ from slugify import slugify
 parser = argparse.ArgumentParser(description='Backup an IMAP account.')
 parser.add_argument('--younger', '--skip-older', type=int, metavar='DAYS', help='Skip messages older than N days.')
 parser.add_argument('--older', '--skip-younger', type=int, metavar='DAYS', help='Skip messages younger than N days.')
+parser.add_argument('--delete', action='store_true', help='Delete message from server after achiving it.')
 args = parser.parse_args()
 
 regex = r'\((?P<flags>.*?)\) "(?P<delimiter>.*)" (?P<name>.*)'
@@ -31,28 +32,28 @@ def parse_list_response(line):
     return mailbox_name
 
 
-def parse_fetch_response(box, messages):
-    for j in range(0, len(messages), 3):
-        parser = emailParser.BytesFeedParser(policy=emailPolicy.default.clone(refold_source="none", utf8=False))
-        parser.feed(messages[j][1])
-        parser.feed(messages[j + 1][1])
-        email = parser.close()
-        subject = email.get('Subject', '')
-        try:
-            date = email.get('date').datetime
-            age_in_days = datetime.now(timezone.utc) - date
-            if args.younger and age_in_days > timedelta(days=args.younger):
-                continue
-            if args.older and age_in_days < timedelta(days=args.older):
-                continue
-        except AttributeError:
-            continue
-        year = date.strftime('%Y')
-        month = date.strftime('%m')
-        day = date.strftime('%d')
+def parse_and_save_message(message):
+    parser = emailParser.BytesFeedParser(policy=emailPolicy.default.clone(refold_source="none", utf8=False))
+    parser.feed(message['headers'])
+    parser.feed(message['body'])
+    email = parser.close()
+    subject = email.get('Subject', '')
+    try:
+        date = email.get('date').datetime
+        age_in_days = datetime.now(timezone.utc) - date
+        if args.younger and age_in_days > timedelta(days=args.younger):
+            return False
+        if args.older and age_in_days < timedelta(days=args.older):
+            return False
+    except AttributeError:
+        return False
+    year = date.strftime('%Y')
+    month = date.strftime('%m')
+    day = date.strftime('%d')
 
-        filename = date.strftime('%H-%M-%S') + '-' + slugify(subject) + '.eml'
-        output.writestr(os.path.join(user, box, year, month, day, filename), email.as_bytes())
+    filename = date.strftime('%H-%M-%S') + '-' + slugify(subject) + '.eml'
+    output.writestr(os.path.join(user, box, year, month, day, filename), email.as_bytes())
+    return True
 
 with IMAP4(hostname) as host:
     # Connection
@@ -73,5 +74,18 @@ with IMAP4(hostname) as host:
         for i in range(1, int(count), 10):
             fetch = str(i) + ':' + str(min(i + 9, int(count)))
             print('{:.0%}'.format(i / int(count)), end='\r')
-            messages = host.fetch(fetch, '(BODY[HEADER] BODY[TEXT])')[1]
-            parse_fetch_response(box, messages)
+            fetched = host.fetch(fetch, '(BODY[HEADER] BODY[TEXT])')
+            if fetched[0] != 'OK':
+                raise Exception('Server did not give correct response.')
+            messages = fetched[1]
+            for j in range(0, len(messages), 3):
+                message = {
+                    'headers': messages[j][1],
+                    'body': messages[j + 1][1]
+                }
+                if parse_and_save_message(message) and args.delete:
+                    message_id = int(i + j/3)
+                    host.store(str(message_id), '+FLAGS', '\\Deleted')
+
+    output.close()
+    host.expunge()
