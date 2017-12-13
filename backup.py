@@ -13,7 +13,7 @@ parser = argparse.ArgumentParser(description='Backup an IMAP account.')
 parser.add_argument('--younger', '--skip-older', type=int, metavar='DAYS', help='Skip messages older than N days.')
 parser.add_argument('--older', '--skip-younger', type=int, metavar='DAYS', help='Skip messages younger than N days.')
 parser.add_argument('--zip', action='store_true', help='Try to do do incremental archive.')
-parser.add_argument('--delete', action='store_true', help='Delete message from server after achiving it.')
+parser.add_argument('--delete', action='store_true', help='Delete message from server after archiving it.')
 args = parser.parse_args()
 
 regex = r'\((?P<flags>.*?)\) "(?P<delimiter>.*)" (?P<name>.*)'
