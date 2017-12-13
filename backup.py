@@ -12,6 +12,7 @@ from slugify import slugify
 parser = argparse.ArgumentParser(description='Backup an IMAP account.')
 parser.add_argument('--younger', '--skip-older', type=int, metavar='DAYS', help='Skip messages older than N days.')
 parser.add_argument('--older', '--skip-younger', type=int, metavar='DAYS', help='Skip messages younger than N days.')
+parser.add_argument('--zip', action='store_true', help='Try to do do incremental archive.')
 parser.add_argument('--delete', action='store_true', help='Delete message from server after achiving it.')
 args = parser.parse_args()
 
@@ -22,7 +23,11 @@ hostname = input('Hostname: ')
 user = input('Login: ')
 password = getpass.getpass()
 os.makedirs(os.path.join('output', hostname), exist_ok=True)
-output = zipfile.ZipFile(os.path.join('output', hostname, user + datetime.now().strftime("%Y%m%d-%H%M%S") + '.zip'), mode='w')
+
+if args.zip:
+    output = zipfile.ZipFile(os.path.join('output', hostname, user + '-' + datetime.now().strftime("%Y%m%d-%H%M%S") + '.zip'), mode='w')
+else:
+    output = os.path.join('output', hostname, user + '-' + datetime.now().strftime("%Y%m%d-%H%M%S"))
 
 
 def parse_list_response(line):
@@ -31,8 +36,13 @@ def parse_list_response(line):
     mailbox_name = mailbox_name.strip('"')
     return mailbox_name
 
-
 def parse_and_save_message(message):
+    '''
+    Parse the message and write it to the ZipFile
+
+    :param message: The message
+    :type message: a dict with headers and body
+    '''
     parser = emailParser.BytesFeedParser(policy=emailPolicy.default.clone(refold_source="none", utf8=False))
     parser.feed(message['headers'])
     parser.feed(message['body'])
@@ -52,7 +62,14 @@ def parse_and_save_message(message):
     day = date.strftime('%d')
 
     filename = date.strftime('%H-%M-%S') + '-' + slugify(subject) + '.eml'
-    output.writestr(os.path.join(user, box, year, month, day, filename), email.as_bytes())
+    path = os.path.join(user, box, year, month, day, filename)
+    if args.zip:
+        output.writestr(path, email.as_bytes())
+    else:
+        path = os.path.join(output, path)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path,'w') as f:
+            f.write(email.as_bytes())
     return True
 
 with IMAP4(hostname) as host:
