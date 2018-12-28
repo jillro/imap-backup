@@ -81,13 +81,18 @@ with IMAP4(hostname) as host:
     # Connection
     host.starttls()
     host.login(user, password)
+
     # Get all folders
     boxes = list(map(parse_list_response, host.list()[1]))
 
     # For each folders
     for box in boxes:
         print('Fetching ' + box)
-        count = host.select('"' + box + '"')[1][0].decode('UTF-8')
+        rv, data = host.select('"' + box + '"')
+        if rv != 'OK':
+            print('Unable to open ' + box)
+            continue
+        count = data[0].decode('UTF-8')
         if count == '0':
             print('Empty folder, skip')
             continue
