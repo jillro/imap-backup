@@ -67,7 +67,7 @@ def parse_and_save_message(message):
     day = date.strftime('%d')
 
     filename = date.strftime('%H-%M-%S') + '-' + slugify(subject) + '.eml'
-    path = os.path.join(user, box, year, month, day, filename)
+    path = os.path.join(user, box, year, month, day, filename[:255])
     if args.zip:
         output.writestr(path, email.as_bytes())
     else:
