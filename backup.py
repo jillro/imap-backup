@@ -73,7 +73,7 @@ def parse_and_save_message(message):
     else:
         path = os.path.join(output, path)
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path,'w') as f:
+        with open(path,'wb') as f:
             f.write(email.as_bytes())
     return True
 
