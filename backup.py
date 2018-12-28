@@ -50,13 +50,18 @@ def parse_and_save_message(message):
     subject = email.get('Subject', '')
     try:
         date = email.get('date').datetime
-        age_in_days = datetime.now(timezone.utc) - date
+    except AttributeError:
+        return False
+    if args.younger or args.older:
+        if date.tzinfo is not None and date.tzinfo.utcoffset(date) is not None:
+            now = datetime.now(timezone.utc)
+        else:
+            now = datetime.now()
+        age_in_days = now - date
         if args.younger and age_in_days > timedelta(days=args.younger):
             return False
         if args.older and age_in_days < timedelta(days=args.older):
             return False
-    except AttributeError:
-        return False
     year = date.strftime('%Y')
     month = date.strftime('%m')
     day = date.strftime('%d')
