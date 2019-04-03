@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 import argparse
+import json
 import os
 import getpass
 from datetime import datetime, timedelta, timezone
-from imaplib import IMAP4
 import re
 import zipfile
 from email import parser as emailParser, policy as emailPolicy
+
+from imapclient import IMAPClient
+from imapclient.exceptions import IMAPClientError
 from slugify import slugify
 
 parser = argparse.ArgumentParser(description='Backup an IMAP account.')
@@ -14,6 +17,7 @@ parser.add_argument('--younger', '--skip-older', type=int, metavar='DAYS', help=
 parser.add_argument('--older', '--skip-younger', type=int, metavar='DAYS', help='Skip messages younger than N days.')
 parser.add_argument('--zip', action='store_true', help='Try to do do incremental archive.')
 parser.add_argument('--delete', action='store_true', help='Delete message from server after archiving it.')
+parser.add_argument('--retry', default=None, help="Specify a retry file")
 args = parser.parse_args()
 
 regex = r'\((?P<flags>.*?)\) "(?P<delimiter>.*)" (?P<name>.*)'
@@ -29,13 +33,6 @@ if args.zip:
 else:
     output = os.path.join('output', hostname, user + '-' + datetime.now().strftime("%Y%m%d-%H%M%S"))
 
-
-def parse_list_response(line):
-    line = line.decode('UTF-8')
-    flags, delimiter, mailbox_name = list_response_pattern.match(line).groups()
-    mailbox_name = mailbox_name.strip('"')
-    return mailbox_name
-
 def parse_and_save_message(message):
     '''
     Parse the message and write it to the ZipFile
@@ -44,8 +41,8 @@ def parse_and_save_message(message):
     :type message: a dict with headers and body
     '''
     parser = emailParser.BytesFeedParser(policy=emailPolicy.default.clone(refold_source="none", utf8=False))
-    parser.feed(message['headers'])
-    parser.feed(message['body'])
+    parser.feed(message[b'BODY[HEADER]'])
+    parser.feed(message[b'BODY[TEXT]'])
     email = parser.close()
     subject = email.get('Subject', '')
     try:
@@ -67,7 +64,7 @@ def parse_and_save_message(message):
     day = date.strftime('%d')
 
     filename = date.strftime('%H-%M-%S') + '-' + slugify(subject) + '.eml'
-    path = os.path.join(user, box, year, month, day, filename[:255])
+    path = os.path.join(user, box_name, filename[:255])
     if args.zip:
         output.writestr(path, email.as_bytes())
     else:
@@ -77,42 +74,37 @@ def parse_and_save_message(message):
             f.write(email.as_bytes())
     return True
 
-with IMAP4(hostname) as host:
+with IMAPClient(hostname) as host:
     # Connection
-    host.starttls()
     host.login(user, password)
 
     # Get all folders
-    boxes = list(map(parse_list_response, host.list()[1]))
+    boxes = host.list_folders()
 
+    if args.retry is not None:
+        completed_boxes = json.loads(open(args.retry))["completed_boxes"]
+    else:
+        completed_boxes = []
     # For each folders
-    for box in boxes:
-        print('Fetching ' + box)
-        rv, data = host.select('"' + box + '"')
-        if rv != 'OK':
-            print('Unable to open ' + box)
-            continue
-        count = data[0].decode('UTF-8')
-        if count == '0':
-            print('Empty folder, skip')
-            continue
-        print('Downloading ' + count + ' messages')
-        # for i in [1, 11, 21, ...]
-        for i in range(1, int(count), 10):
-            fetch = str(i) + ':' + str(min(i + 9, int(count)))
-            print('{:.0%}'.format(i / int(count)), end='\r')
-            fetched = host.fetch(fetch, '(BODY[HEADER] BODY[TEXT])')
-            if fetched[0] != 'OK':
-                raise Exception('Server did not give correct response.')
-            messages = fetched[1]
-            for j in range(0, len(messages), 3):
-                message = {
-                    'headers': messages[j][1],
-                    'body': messages[j + 1][1]
-                }
-                if parse_and_save_message(message) and args.delete:
-                    message_id = int(i + j/3)
-                    host.store(str(message_id), '+FLAGS', '\\Deleted')
+    for flags, delimiter, box_name in boxes:
+        print('Fetching ' + box_name)
+        try :
+            count = host.select_folder(box_name)[b'EXISTS']
+            print('Downloading ' + str(count) + ' messages')
+            messages = host.search()
+            for i in range(0, int(count), 10):
+                messages_slice = messages[i:min(i+10, count)]
+                print('{:.0%}'.format(i / count), end='\r')
+                fetched = host.fetch(messages_slice, ['BODY[HEADER] BODY[TEXT]'])
+                for id, message in fetched.items():
+                    if parse_and_save_message(message) and args.delete:
+                        message_id = int(i + id/3)
+                        host.store(str(message_id), '+FLAGS', '\\Deleted')
 
-    output.close()
+            completed_boxes.append(box_name)
+        except IMAPClientError:
+            with open(user + '-' + datetime.now().isoformat() + '-retry.json', 'w') as fp:
+                json.dump({'completed_boxes': completed_boxes}, fp)
+
+
     host.expunge()
